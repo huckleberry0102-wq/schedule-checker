@@ -1,0 +1,65 @@
+name: Schedule Checker
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_email:
+        description: "Send a test email"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run monitor
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEST_EMAIL: ${{ inputs.test_email }}
+        run: |
+          if [ "$TEST_EMAIL" = "true" ]; then
+            python - <<'PY'
+          import os
+          import smtplib
+          from email.message import EmailMessage
+
+          address = os.environ["GMAIL_ADDRESS"]
+          password = os.environ["GMAIL_APP_PASSWORD"]
+
+          msg = EmailMessage()
+          msg["Subject"] = "サンライズ監視ツール テストメール"
+          msg["From"] = address
+          msg["To"] = address
+          msg.set_content("テスト成功！ Gmailへのメール送信設定は正常に動作しています。")
+
+          with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as smtp:
+              smtp.starttls()
+              smtp.login(address, password)
+              smtp.send_message(msg)
+
+          print("テストメールを送信しました。")
+          PY
+          fi
+          python monitor.py
