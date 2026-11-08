@@ -189,6 +189,26 @@ def search_one(page, train_name, train_value, facility, retry=True):
         choose_option(page, "#jsSelectHour", HOUR)
         choose_option(page, "#jsSelectMinute", MINUTE)
 
+        # JRの検索処理は、画面上の日付プルダウンではなく
+        # hidden input #inputDate の値を送信するため、明示的に設定する。
+        target_date = f"{YEAR}{MONTH}{DAY}"
+        page.locator("#inputDate").evaluate(
+            """(el, value) => {
+                el.value = value;
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+            }""",
+            target_date,
+        )
+
+        # 送信直前に、意図した日付がセットされていることを必ず確認する。
+        actual_date = page.locator("#inputDate").input_value()
+        print(f"送信直前の inputDate: {actual_date}")
+        if actual_date != target_date:
+            raise RuntimeError(
+                f"日付の設定に失敗しました（期待値: {target_date} / 実際: {actual_date}）"
+            )
+
         page.locator("#jsSelectTrainType").select_option(train_value)
         choose_option(page, "#inputDepartStName", "東京")
         choose_option(page, "#inputArriveStName", "岡山")
