@@ -1,20 +1,22 @@
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+import time
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 URL = "https://www.jr-odekake.net/goyoyaku/campaign/sunriseseto_izumo/form.html"
 
-# まずは1パターンだけ調べる（予約監視本体には影響しない）
+# 診断対象：2026年11月20日、東京→岡山、サンライズ瀬戸、シングルデラックス
 YEAR, MONTH, DAY = "2026", "11", "20"
 HOUR, MINUTE = "21", "00"
-TRAIN_NAME = "サンライズ瀬戸"
 TRAIN_VALUE = "seto"
 FACILITY = "シングルデラックス"
 
+
 def choose_option(page, selector, label):
     page.locator(selector).select_option(label=label)
+
 
 def main():
     out = Path("diagnostics")
@@ -33,14 +35,26 @@ def main():
         try:
             print("JR公式サイトを開きます")
             page.goto(URL, wait_until="domcontentloaded", timeout=60000)
+
+            # 「会員ログインせず予約」を選択
             page.locator("#member-no").click()
             page.locator("#jsSelectYear").wait_for(timeout=30000)
 
+            # 画面上の日付・時刻を指定
             choose_option(page, "#jsSelectYear", f"{YEAR}年")
             choose_option(page, "#jsSelectMonth", f"{int(MONTH)}月")
             choose_option(page, "#jsSelectDay", f"{int(DAY)}日")
             choose_option(page, "#jsSelectHour", HOUR)
             choose_option(page, "#jsSelectMinute", MINUTE)
+
+            # JRページは画面の日付選択とは別に hidden の inputDate を送信する。
+            # 選択操作だけでは hidden 値が空のままになる場合があるため、送信値を明示する。
+            page.locator("#inputDate").evaluate(
+                "(el, value) => { el.value = value; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }",
+                f"{YEAR}{MONTH}{DAY}",
+            )
+
+            # 列車・区間・設備
             page.locator("#jsSelectTrainType").select_option(TRAIN_VALUE)
             choose_option(page, "#inputDepartStName", "東京")
             choose_option(page, "#inputArriveStName", "岡山")
@@ -48,12 +62,18 @@ def main():
                 f'input[name="facilitySelect"][value="{FACILITY}"]'
             ).check(timeout=15000)
 
+            # 送信前に hidden 日付値を必ず確認
+            hidden_date = page.locator("#inputDate").input_value()
+            print("送信直前の inputDate:", hidden_date)
+            if hidden_date != f"{YEAR}{MONTH}{DAY}":
+                raise RuntimeError(
+                    f"日付の送信値が正しくありません: inputDate={hidden_date!r}"
+                )
+
             submit = page.locator("#submitButton")
             submit.wait_for(state="visible", timeout=15000)
-            submit.wait_for(state="attached", timeout=15000)
-
-            deadline = __import__("time").time() + 15
-            while not submit.is_enabled() and __import__("time").time() < deadline:
+            deadline = time.time() + 15
+            while not submit.is_enabled() and time.time() < deadline:
                 page.wait_for_timeout(500)
             if not submit.is_enabled():
                 raise RuntimeError("検索ボタンが有効になりませんでした")
@@ -61,7 +81,7 @@ def main():
             print("検索を実行します")
             submit.click()
 
-            # 本体の2.5秒待機と比較できるよう、診断では最大30秒待ってから保存
+            # 結果画面の表示を待つ
             try:
                 page.locator(".route-train-list__section-body").first.wait_for(timeout=30000)
             except PlaywrightTimeoutError:
@@ -92,6 +112,7 @@ def main():
             print("TEXT:", text_file)
         finally:
             browser.close()
+
 
 if __name__ == "__main__":
     main()
